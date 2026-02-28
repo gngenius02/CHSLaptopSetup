@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Default Bookmark Guid</key>
+	<string>default</string>
+	<key>New Bookmarks</key>
+	<array>
+		<dict>
+			<key>Guid</key>
+			<string>default</string>
+			<key>Name</key>
+			<string>Default</string>
+			<key>Custom Command</key>
+			<string>No</string>
+			<key>Initial Text</key>
+			<string></string>
+			<key>Normal Font</key>
+			<string>MesloLGS-NF-Regular 13</string>
+			<key>Non Ascii Font</key>
+			<string>MesloLGS-NF-Regular 13</string>
+			<key>Scrollback Lines</key>
+			<integer>10000</integer>
+			<key>Terminal Type</key>
+			<string>xterm-256color</string>
+			<key>Use Bold Font</key>
+			<true/>
+			<key>Use Bright Bold</key>
+			<true/>
+			<key>Use Italic Font</key>
+			<true/>
+			<key>Unlimited Scrollback</key>
+			<false/>
+		</dict>
+	</array>
+	<key>OnlyWhenMoreTabs</key>
+	<false/>
+	<key>PromptOnQuit</key>
+	<false/>
+	<key>TabViewType</key>
+	<integer>0</integer>
+</dict>
+</plist>
