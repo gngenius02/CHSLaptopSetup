@@ -28,6 +28,7 @@ func uiConfirm(title, message string) (bool, error) {
 }
 
 func uiPrompt(title, message, defaultValue string) (string, error) {
+	fmt.Println("  [!] If you are fullscreened in Terminal, a prompt may appear behind it.")
 	script := fmt.Sprintf(
 		`display dialog %q with title %q default answer %q`,
 		message, title, defaultValue,
@@ -49,6 +50,7 @@ func uiChooseFromList(title, message string, options, defaultOptions []string) (
 	if len(options) == 0 {
 		return nil, nil
 	}
+	fmt.Println("  [!] If you are fullscreened in Terminal, a selection dialog may appear behind it.")
 	script := fmt.Sprintf(`
 set itemList to {%s}
 set defaultList to {%s}
@@ -84,6 +86,7 @@ func uiChooseOptionalCheckboxes(title, message string, options, defaultOptions [
 	if len(options) == 0 {
 		return nil, nil
 	}
+	fmt.Println("  [!] If you are fullscreened in Terminal, a checkbox dialog may appear behind it.")
 
 	defaultSet := map[string]bool{}
 	for _, d := range defaultOptions {
@@ -202,15 +205,18 @@ func uiVPNPrompt() {
 }
 
 func osascript(script string) error {
-	return exec.Command("osascript", "-e", script).Run()
+	return exec.Command("osascript", "-e", `tell application "Terminal" to activate`, "-e", script).Run()
 }
 
 func osascriptOutput(script string) (string, error) {
-	out, err := exec.Command("osascript", "-e", script).Output()
+	out, err := exec.Command("osascript", "-e", `tell application "Terminal" to activate`, "-e", script).Output()
 	return strings.TrimSpace(string(out)), err
 }
 
 func osascriptOutputLang(lang, script string) (string, error) {
+	if strings.EqualFold(lang, "JavaScript") {
+		script = `Application("Terminal").activate();` + "\n" + script
+	}
 	out, err := exec.Command("osascript", "-l", lang, "-e", script).Output()
 	return strings.TrimSpace(string(out)), err
 }

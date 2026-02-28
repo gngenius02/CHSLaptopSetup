@@ -254,6 +254,7 @@ func installITerm2() error {
 		return fmt.Errorf("writing iterm2 plist: %w", err)
 	}
 	_, _ = runCmd("iterm2", nil, "defaults", "read", "com.googlecode.iterm2")
+	logInfo("iterm2", "iTerm installed. You can continue in Terminal, or switch to iTerm after this run.", nil)
 	return nil
 }
 
@@ -262,6 +263,7 @@ func installXcode() error {
 		logInfo("xcode", "Xcode CLI tools already installed", nil)
 		return nil
 	}
+	fmt.Println("  [!] Heads up: installer dialogs can appear behind/fullscreen terminal windows.")
 	fmt.Println("  [→] Installing Xcode Command Line Tools (a system dialog will appear)...")
 	_ = runInteractive("xcode", "xcode-select", "--install")
 	ok, _ := uiConfirm("Xcode CLI Tools", "Click OK once the Xcode Command Line Tools installation is complete.")
@@ -310,7 +312,7 @@ func installHomebrew() error {
 
 func ensureBrewPackages() error {
 	brew := "/opt/homebrew/bin/brew"
-	for _, pkg := range []string{"openssl", "yubico-piv-tool", "jq", "pyenv", "pyenv-virtualenv"} {
+	for _, pkg := range []string{"openssl", "xz", "yubico-piv-tool", "jq", "pyenv", "pyenv-virtualenv"} {
 		if _, err := runCmd("homebrew", nil, brew, "install", pkg); err != nil {
 			return fmt.Errorf("brew install %s: %w", pkg, err)
 		}
@@ -341,6 +343,9 @@ func ensureOpenSCSymlinks() error {
 
 func installPyenv() error {
 	// pyenv binary is installed via homebrew; this step just ensures .zshrc is configured.
+	if _, err := runCmd("pyenv", nil, "pyenv", "--version"); err != nil {
+		return err
+	}
 	return appendToZshrc("# BEGIN: pyenv",
 		`# BEGIN: pyenv
 export PYENV_ROOT="$HOME/.pyenv"
@@ -356,7 +361,7 @@ func installPythonVersion(version string) error {
 		logInfo("pyenv", fmt.Sprintf("Python %s already installed", version), nil)
 		return nil
 	}
-	_, err := runCmd("pyenv", nil, os.Getenv("HOME")+"/.pyenv/bin/pyenv", "install", version)
+	_, err := runCmd("pyenv", nil, "pyenv", "install", version)
 	return err
 }
 
@@ -366,13 +371,13 @@ func installPyenvVenv(venvName, pythonVersion string) error {
 		logInfo("pyenv", fmt.Sprintf("virtualenv %s already exists", venvName), nil)
 		return nil
 	}
-	_, err := runCmd("pyenv_venv", nil, os.Getenv("HOME")+"/.pyenv/bin/pyenv", "virtualenv", pythonVersion, venvName)
+	_, err := runCmd("pyenv_venv", nil, "pyenv", "virtualenv", pythonVersion, venvName)
 	return err
 }
 
 func setPyenvGlobal(versions ...string) error {
 	args := append([]string{"global"}, versions...)
-	_, err := runCmd("pyenv_global", nil, os.Getenv("HOME")+"/.pyenv/bin/pyenv", args...)
+	_, err := runCmd("pyenv_global", nil, "pyenv", args...)
 	return err
 }
 

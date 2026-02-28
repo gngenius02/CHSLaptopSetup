@@ -18,11 +18,22 @@ func main() {
 	onlyFlag := flag.String("only", "", "comma-separated tool IDs to install (use --list to see options)")
 	listFlag := flag.Bool("list", false, "list available tool IDs and exit")
 	dryRunFlag := flag.Bool("dry-run", false, "print intended actions without making system changes")
+	forceReinstallFlag := flag.Bool("force-reinstall", false, "ignore saved completion state and rerun all selected steps")
+	resetStateFlag := flag.Bool("reset-state", false, "clear saved completion state and exit")
 	flag.Parse()
 	dryRun = *dryRunFlag
+	forceReinstall = *forceReinstallFlag
 
 	if *listFlag {
 		printToolList()
+		return
+	}
+	if *resetStateFlag {
+		if err := resetRunState(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to reset state: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Saved state reset. Next run will behave like first run.")
 		return
 	}
 
@@ -31,6 +42,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer logClose()
+	if err := loadRunState(); err != nil {
+		logWarn("state", fmt.Sprintf("could not load saved state: %v", err), nil)
+	}
 
 	printBanner()
 	if dryRun {
@@ -157,9 +171,19 @@ func main() {
 
 func runPhase(tools []toolID, guid string) error {
 	for i, t := range tools {
+		if !forceReinstall && isToolCompleted(t) {
+			fmt.Printf("\n  [%d/%d] %s\n", i+1, len(tools), t)
+			fmt.Printf("  [✓] %s already completed in previous run, skipping\n", t)
+			continue
+		}
 		fmt.Printf("\n  [%d/%d] %s\n", i+1, len(tools), t)
 		if err := runTool(t, guid); err != nil {
 			return fmt.Errorf("%s failed: %w", t, err)
+		}
+		if !dryRun {
+			if err := markToolCompleted(t); err != nil {
+				logWarn("state", fmt.Sprintf("failed to persist completion state for %s: %v", t, err), nil)
+			}
 		}
 		fmt.Printf("  [✓] %s done\n", t)
 	}
