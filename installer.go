@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -39,7 +40,7 @@ var depMap = map[toolID][]toolID{
 	toolAllProxy:     {toolPython313, toolHomebrew},
 	toolSpartaPKI:    {},
 	toolHopsCLI:      {toolPython313, toolSpartaPKI},
-	toolGNOCHelper:   {toolPyenvVenvNCP, toolAllProxy},
+	toolGNOCHelper:   {toolPyenvVenvNCP},
 	toolStencil:      {toolPyenvVenvNCP},
 	toolSilencer:     {},
 	toolNCPCLI:       {toolPyenvVenvNCP},
@@ -75,6 +76,13 @@ var phase1Tools = map[toolID]bool{
 	toolPython396:    true,
 	toolPyenvVenvNCP: true,
 }
+
+var phase4Tools = map[toolID]bool{
+	toolAllProxy: true,
+	toolHopsCLI:  true,
+}
+
+const defaultOCNACheckTarget = "ocna-placeholder.oraclecorp.com:443"
 
 // resolveTools returns a deduplicated, dependency-ordered list for the requested tools.
 func resolveTools(requested []toolID) []toolID {
@@ -200,6 +208,36 @@ func waitForVPN() {
 			return
 		}
 		fmt.Printf("  [~] Waiting for VPN (%s)...\n", hosts[0])
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func waitForOCNA() error {
+	if dryRun {
+		logInfo("ocna_wait", "dry-run mode: would verify OCNA connectivity", nil)
+		return nil
+	}
+	target := strings.TrimSpace(os.Getenv("CHS_OCNA_CHECK_TARGET"))
+	if target == "" {
+		target = defaultOCNACheckTarget
+	}
+	if target == defaultOCNACheckTarget {
+		logWarn("ocna_wait", "OCNA check target is still placeholder; using manual confirmation fallback", map[string]string{"target": target})
+		ok, _ := uiConfirm("OCNA Verification", "OCNA check target is a placeholder. Confirm your OCNA VPN and Yubikey are connected, then click Yes to continue.")
+		if !ok {
+			return fmt.Errorf("OCNA confirmation required to continue")
+		}
+		return nil
+	}
+	logInfo("ocna_wait", "polling for OCNA connectivity", map[string]string{"target": target})
+	for {
+		conn, err := net.DialTimeout("tcp", target, 3*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			logInfo("ocna_wait", "OCNA connectivity confirmed", map[string]string{"target": target})
+			return nil
+		}
+		fmt.Printf("  [~] Waiting for OCNA (%s)...\n", target)
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -384,6 +422,7 @@ func setPyenvGlobal(versions ...string) error {
 // ── Phase 3 installers ────────────────────────────────────────────────────────
 
 func installAllProxy() error {
+	logInfo("allproxy", "allproxy can take several minutes depending on network and pip index reachability", nil)
 	home := os.Getenv("HOME")
 	dir := home + "/misc-tools"
 	if err := gitCloneOrPull("allproxy", "ssh://git@bitbucket.oci.oraclecorp.com:7999/~rralliso/misc-tools.git", dir); err != nil {
@@ -420,6 +459,7 @@ func installSpartaPKI() error {
 }
 
 func installHopsCLI() error {
+	logInfo("hops_cli", "hops-cli installation can take up to 5 minutes", nil)
 	pip := os.Getenv("HOME") + "/.pyenv/versions/3.13.2/bin/pip"
 	_, _ = runCmd("hops_cli", nil, pip, "cache", "purge")
 	if _, err := runCmd("hops_cli", nil, pip, "install", "--upgrade", "pip"); err != nil {

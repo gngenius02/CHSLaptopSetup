@@ -7,6 +7,31 @@ import (
 	"strings"
 )
 
+func uiChoose(title, message string, buttons []string, defaultButton string) (string, error) {
+	if len(buttons) == 0 {
+		return "", fmt.Errorf("buttons required")
+	}
+	btnList := make([]string, 0, len(buttons))
+	for _, b := range buttons {
+		btnList = append(btnList, strconv.Quote(b))
+	}
+	script := fmt.Sprintf(
+		`display dialog %q with title %q buttons {%s} default button %q`,
+		message, title, strings.Join(btnList, ", "), defaultButton,
+	)
+	out, err := osascriptOutput(script)
+	if err != nil {
+		return "", err
+	}
+	for _, part := range strings.Split(out, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "button returned:") {
+			return strings.TrimSpace(strings.TrimPrefix(part, "button returned:")), nil
+		}
+	}
+	return "", fmt.Errorf("could not parse button selection: %q", out)
+}
+
 func uiAlert(title, message string) error {
 	script := fmt.Sprintf(
 		`display alert %q message %q buttons {"OK"} default button "OK"`,
@@ -180,28 +205,32 @@ func appleScriptList(items []string) string {
 
 // uiShowSSHKey shows the public key and blocks until user confirms it's been added to Bitbucket.
 func uiShowSSHKey(pubKey string) error {
-	script := fmt.Sprintf(
-		`display dialog "Your SSH public key — add this to Bitbucket:\n\n%s" `+
-			`with title "SSH Public Key" buttons {"Open Bitbucket", "Already added"} `+
-			`default button "Already added"`,
-		pubKey,
-	)
-	out, err := osascriptOutput(script)
-	if err != nil {
-		return fmt.Errorf("dialog cancelled: %w", err)
-	}
-	if strings.Contains(out, "Open Bitbucket") {
+	for {
+		selection, err := uiChoose(
+			"SSH Public Key",
+			fmt.Sprintf("Your SSH public key — add this to Bitbucket:\n\n%s", pubKey),
+			[]string{"Open Bitbucket", "Already added"},
+			"Already added",
+		)
+		if err != nil {
+			return fmt.Errorf("dialog cancelled: %w", err)
+		}
+		if selection == "Already added" {
+			return nil
+		}
+		_ = exec.Command("pbcopy").Run()
+		cmd := exec.Command("zsh", "-lc", "printf %s \"$1\" | pbcopy", "--", pubKey)
+		_ = cmd.Run()
 		_ = exec.Command("open", "https://bitbucket.oci.oraclecorp.com/plugins/servlet/ssh/account/keys").Run()
-		ok, _ := uiConfirm("SSH Key", "Have you added the SSH key to Bitbucket?")
-		if !ok {
-			return fmt.Errorf("SSH key not added to Bitbucket — cannot continue")
+		ok, _ := uiConfirm("SSH Key", "SSH key copied to clipboard and Bitbucket opened. Click Yes after adding the key, or No to return to the prompt.")
+		if ok {
+			return nil
 		}
 	}
-	return nil
 }
 
 func uiVPNPrompt() {
-	_ = uiAlert("Connect to VPN", "Phase 1 complete.\n\nPlease connect to Cisco VPN now, then click OK to continue.")
+	_ = uiAlert("Connect to VPN", "Phase 1 complete.\n\nPlease connect to myaccess.oraclevpn.com now, and only click OK once connected.")
 }
 
 func osascript(script string) error {

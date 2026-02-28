@@ -42,6 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer logClose()
+	defer runCleanup()
 	if err := loadRunState(); err != nil {
 		logWarn("state", fmt.Sprintf("could not load saved state: %v", err), nil)
 	}
@@ -63,6 +64,18 @@ func main() {
 		logInfo("sudo", "dry-run mode: skipping sudo credential caching", nil)
 	}
 
+	if err := configureNoSleepAliases(); err != nil {
+		logFatal("sleep_alias", err.Error(), nil)
+	}
+	if err := applyNoSleepNow(); err != nil {
+		logFatal("sleep_ns", err.Error(), nil)
+	}
+	registerCleanup(func() {
+		if err := restoreSleepNow(); err != nil {
+			logWarn("sleep_ys", fmt.Sprintf("failed to restore sleep settings: %v", err), nil)
+		}
+	})
+
 	// Preflight
 	logSetPhase("preflight")
 	fmt.Println("\n── Preflight ─────────────────────────────────────────────────")
@@ -74,9 +87,6 @@ func main() {
 	// Write .zshrc blocks
 	if err := writeBaseZshrcBlocks(); err != nil {
 		logFatal("zshrc", err.Error(), nil)
-	}
-	if err := configureNoSleepAliases(); err != nil {
-		logFatal("sleep_alias", err.Error(), nil)
 	}
 
 	// Resolve tool list
@@ -101,11 +111,13 @@ func main() {
 		bastionConfigsSelected = bastionSelected
 	}
 
-	// Split into phase 1 / phase 3
-	var p1, p3 []toolID
+	// Split into phase 1 / phase 3 / phase 4 (OCNA-gated)
+	var p1, p3, p4 []toolID
 	for _, t := range tools {
 		if phase1Tools[t] {
 			p1 = append(p1, t)
+		} else if phase4Tools[t] {
+			p4 = append(p4, t)
 		} else {
 			p3 = append(p3, t)
 		}
@@ -132,11 +144,11 @@ func main() {
 		}
 	}
 
-	if len(p3) == 0 {
+	if len(p3) == 0 && len(p4) == 0 {
 		if bastionConfigsSelected {
 			logWarn("bastion_configs", "Bastion configs selected, but setup is not implemented yet; skipping", nil)
 		}
-		fmt.Println("\n✓ Done. No Phase 3 tools selected.")
+		fmt.Println("\n✓ Done. No VPN-gated tools selected.")
 		return
 	}
 
@@ -155,11 +167,28 @@ func main() {
 		logInfo("net_check", "public internet reachable while on VPN", nil)
 	}
 
-	// Phase 3: internal tools
-	logSetPhase("phase3")
-	fmt.Println("\n── Phase 3: Internal Tools (VPN ON) ──────────────────────────")
-	if err := runPhase(p3, guid); err != nil {
-		logFatal("phase3", err.Error(), nil)
+	if len(p3) > 0 {
+		// Phase 3: internal tools on myaccess VPN
+		logSetPhase("phase3")
+		fmt.Println("\n── Phase 3: Internal Tools (myaccess VPN) ────────────────────")
+		if err := runPhase(p3, guid); err != nil {
+			logFatal("phase3", err.Error(), nil)
+		}
+	}
+
+	if len(p4) > 0 {
+		logSetPhase("phase4")
+		fmt.Println("\n── Phase 4: OCNA + Yubikey Required (Final Installs) ────────")
+		ok, _ := uiConfirm("OCNA + Yubikey Required", "Before continuing, connect OCNA VPN and ensure your Yubikey is set up and connected. Continue?")
+		if !ok {
+			logFatal("phase4", "OCNA/Yubikey confirmation required", nil)
+		}
+		if err := waitForOCNA(); err != nil {
+			logFatal("phase4", err.Error(), nil)
+		}
+		if err := runPhase(p4, guid); err != nil {
+			logFatal("phase4", err.Error(), nil)
+		}
 	}
 	if bastionConfigsSelected {
 		logWarn("bastion_configs", "Bastion configs selected, but setup is not implemented yet; skipping", nil)

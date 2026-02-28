@@ -11,6 +11,11 @@ import (
 )
 
 var cachedSSHPublicKey string
+var (
+	originalSleepValue       string
+	originalHibernateValue   string
+	originalDisableSleepValue string
+)
 
 // preflightRun executes all preflight checks. Returns the Oracle GUID entered by the user.
 func preflightRun() (string, error) {
@@ -98,8 +103,74 @@ func preflightIdentity() (string, error) {
 	}
 	guid = strings.TrimSpace(guid)
 	logInfo("identity", "oracle GUID entered", map[string]string{"guid": guid})
-	logInfo("identity", "hostname/realname mutation disabled; GUID will only be used for tool config", nil)
+
+	currentUser := strings.TrimSpace(cmdOutput("id", "-un"))
+	if currentUser == "" {
+		currentUser = os.Getenv("USER")
+	}
+	currentHome := strings.TrimSpace(os.Getenv("HOME"))
+	expectedHome := "/Users/" + guid
+
+	if strings.EqualFold(currentUser, guid) && strings.EqualFold(currentHome, expectedHome) {
+		logInfo("identity", "local username/home already match GUID", nil)
+		return guid, nil
+	}
+
+	logWarn("identity", "local user/home mismatch detected", map[string]string{
+		"current_user": currentUser,
+		"guid":         guid,
+		"current_home": currentHome,
+		"expected_home": expectedHome,
+	})
+
+	choice, err := uiChoose(
+		"GUID Mismatch",
+		fmt.Sprintf("Your GUID is %s, but local account is %s with home %s.\n\nChoose how to proceed:", guid, currentUser, currentHome),
+		[]string{"Auto-rename", "Manual steps", "Cancel"},
+		"Manual steps",
+	)
+	if err != nil {
+		return "", fmt.Errorf("identity choice cancelled: %w", err)
+	}
+	if choice == "Cancel" {
+		return "", fmt.Errorf("cancelled by user")
+	}
+	if choice == "Manual steps" {
+		_ = uiAlert("Manual Rename Required",
+			fmt.Sprintf("Please rename your local user and home folder to GUID before rerunning:\n\nCurrent user: %s\nGUID: %s\nExpected home: %s\n\nThen run chs-onboard again.", currentUser, guid, expectedHome))
+		return "", fmt.Errorf("manual rename required before proceeding")
+	}
+
+	if err := autoRenameLocalUser(guid, currentUser, currentHome); err != nil {
+		return "", err
+	}
+	_ = uiAlert("Relogin Required", "Account rename completed. Please log out and log back in, then rerun chs-onboard.")
+	os.Exit(0)
 	return guid, nil
+}
+
+func autoRenameLocalUser(guid, currentUser, currentHome string) error {
+	if dryRun {
+		logInfo("identity", "dry-run mode: would auto-rename local user/home to GUID", map[string]string{"guid": guid})
+		return nil
+	}
+	if strings.EqualFold(currentUser, guid) {
+		return nil
+	}
+
+	newHome := "/Users/" + guid
+	cmds := [][]string{
+		{"sysadminctl", "-renameUser", currentUser, "-newName", guid},
+		{"dscl", ".", "-create", "/Users/" + guid, "NFSHomeDirectory", newHome},
+		{"mv", currentHome, newHome},
+	}
+	for _, c := range cmds {
+		if _, err := sudoCmd("identity_rename", nil, c[0], c[1:]...); err != nil {
+			return fmt.Errorf("auto-rename failed (%s): %w", strings.Join(c, " "), err)
+		}
+	}
+	logInfo("identity", "auto-rename completed", map[string]string{"new_user": guid, "new_home": newHome})
+	return nil
 }
 
 func checkPublicInternet() error {
@@ -116,18 +187,60 @@ func checkPublicInternet() error {
 }
 
 func configureNoSleepAliases() error {
-	sleep := firstPmsetValue("sleep", "10")
-	hibernate := firstPmsetValue("hibernatemode", "3")
-	disableSleep := firstPmsetValue("disablesleep", "0")
+	originalSleepValue = firstPmsetValue("sleep", "10")
+	originalHibernateValue = firstPmsetValue("hibernatemode", "3")
+	originalDisableSleepValue = firstPmsetValue("disablesleep", "0")
 
 	fmt.Printf("\n── Sleep Settings ─────────────────────────────────────────────\n")
-	fmt.Printf("  current pmset values: sleep=%s hibernatemode=%s disablesleep=%s\n", sleep, hibernate, disableSleep)
+	fmt.Printf("  current pmset values: sleep=%s hibernatemode=%s disablesleep=%s\n", originalSleepValue, originalHibernateValue, originalDisableSleepValue)
 
 	block := fmt.Sprintf(`# BEGIN: Sleep Controls
 alias ns='sudo pmset -a sleep 0; sudo pmset -a hibernatemode 0; sudo pmset -a disablesleep 1;'
 alias ys='sudo pmset -a sleep %s; sudo pmset -a hibernatemode %s; sudo pmset -a disablesleep %s;'
-# END: Sleep Controls`, sleep, hibernate, disableSleep)
+# END: Sleep Controls`, originalSleepValue, originalHibernateValue, originalDisableSleepValue)
 	return appendToZshrc("# BEGIN: Sleep Controls", block)
+}
+
+func applyNoSleepNow() error {
+	if dryRun {
+		logInfo("sleep_ns", "dry-run mode: would apply no-sleep settings now", nil)
+		return nil
+	}
+	for _, c := range [][]string{{"pmset", "-a", "sleep", "0"}, {"pmset", "-a", "hibernatemode", "0"}, {"pmset", "-a", "disablesleep", "1"}} {
+		if _, err := sudoCmd("sleep_ns", nil, c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	logInfo("sleep_ns", "applied no-sleep settings", nil)
+	return nil
+}
+
+func restoreSleepNow() error {
+	if originalSleepValue == "" {
+		originalSleepValue = firstPmsetValue("sleep", "10")
+	}
+	if originalHibernateValue == "" {
+		originalHibernateValue = firstPmsetValue("hibernatemode", "3")
+	}
+	if originalDisableSleepValue == "" {
+		originalDisableSleepValue = firstPmsetValue("disablesleep", "0")
+	}
+	if dryRun {
+		logInfo("sleep_ys", "dry-run mode: would restore original sleep settings now", map[string]string{"sleep": originalSleepValue, "hibernatemode": originalHibernateValue, "disablesleep": originalDisableSleepValue})
+		return nil
+	}
+	cmds := [][]string{
+		{"pmset", "-a", "sleep", originalSleepValue},
+		{"pmset", "-a", "hibernatemode", originalHibernateValue},
+		{"pmset", "-a", "disablesleep", originalDisableSleepValue},
+	}
+	for _, c := range cmds {
+		if _, err := sudoCmd("sleep_ys", nil, c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	logInfo("sleep_ys", "restored original sleep settings", nil)
+	return nil
 }
 
 func firstPmsetValue(key, fallback string) string {
