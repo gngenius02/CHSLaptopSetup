@@ -78,6 +78,95 @@ return chosen as string`, appleScriptList(options), appleScriptList(defaultOptio
 	return selected, nil
 }
 
+// uiChooseOptionalCheckboxes renders a checkbox-style selector using JXA/Cocoa.
+// Falls back to choose-from-list if JXA dialog fails.
+func uiChooseOptionalCheckboxes(title, message string, options, defaultOptions []string) ([]string, error) {
+	if len(options) == 0 {
+		return nil, nil
+	}
+
+	defaultSet := map[string]bool{}
+	for _, d := range defaultOptions {
+		defaultSet[d] = true
+	}
+
+	optionLiterals := make([]string, 0, len(options))
+	defaultLiterals := make([]string, 0, len(options))
+	for _, opt := range options {
+		optionLiterals = append(optionLiterals, strconv.Quote(opt))
+		if defaultSet[opt] {
+			defaultLiterals = append(defaultLiterals, "true")
+		} else {
+			defaultLiterals = append(defaultLiterals, "false")
+		}
+	}
+
+	script := fmt.Sprintf(`
+ObjC.import('Cocoa');
+
+const title = %s;
+const message = %s;
+const options = [%s];
+const defaults = [%s];
+
+$.NSApplication.sharedApplication;
+const alert = $.NSAlert.alloc.init;
+alert.messageText = $(title);
+alert.informativeText = $(message);
+alert.addButtonWithTitle($('Continue'));
+alert.addButtonWithTitle($('Cancel'));
+
+const rowHeight = 26;
+const width = 360;
+const height = Math.max(40, options.length * rowHeight + 8);
+const view = $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, width, height));
+const checks = [];
+
+for (let i = 0; i < options.length; i++) {
+  const y = height - ((i + 1) * rowHeight);
+  const cb = $.NSButton.alloc.initWithFrame($.NSMakeRect(0, y, width, 22));
+  cb.setButtonType($.NSSwitchButton);
+  cb.title = $(options[i]);
+  cb.state = defaults[i] ? $.NSControlStateValueOn : $.NSControlStateValueOff;
+  view.addSubview(cb);
+  checks.push(cb);
+}
+
+alert.accessoryView = view;
+const response = alert.runModal;
+if (response !== $.NSAlertFirstButtonReturn) {
+  '';
+} else {
+  const selected = [];
+  for (let i = 0; i < checks.length; i++) {
+    if (checks[i].state === $.NSControlStateValueOn) {
+      selected.push(options[i]);
+    }
+  }
+  selected.join('|||');
+}
+`, strconv.Quote(title), strconv.Quote(message), strings.Join(optionLiterals, ", "), strings.Join(defaultLiterals, ", "))
+
+	out, err := osascriptOutputLang("JavaScript", script)
+	if err != nil {
+		logWarn("tool_select", "checkbox dialog failed, falling back to list dialog", map[string]string{"error": err.Error()})
+		return uiChooseFromList(title, message, options, defaultOptions)
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil, nil
+	}
+	parts := strings.Split(out, "|||")
+	selected := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			selected = append(selected, p)
+		}
+	}
+	return selected, nil
+}
+
 func appleScriptList(items []string) string {
 	quoted := make([]string, 0, len(items))
 	for _, item := range items {
@@ -118,5 +207,10 @@ func osascript(script string) error {
 
 func osascriptOutput(script string) (string, error) {
 	out, err := exec.Command("osascript", "-e", script).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func osascriptOutputLang(lang, script string) (string, error) {
+	out, err := exec.Command("osascript", "-l", lang, "-e", script).Output()
 	return strings.TrimSpace(string(out)), err
 }

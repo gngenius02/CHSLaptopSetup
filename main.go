@@ -75,14 +75,14 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		requested, bastionSelected, err := promptToolSelection(*gnocFlag)
+		requestedOptional, bastionSelected, err := promptToolSelection(*gnocFlag)
 		if err != nil {
 			logFatal("tool_select", err.Error(), nil)
 		}
-		if len(requested) == 0 && !bastionSelected {
-			fmt.Println("\nNo tools selected. Exiting.")
-			return
+		if len(requestedOptional) == 0 && !bastionSelected {
+			fmt.Println("\nNo optional tools selected. Continuing with required tool set.")
 		}
+		requested := append(requiredTools(), requestedOptional...)
 		tools = resolveTools(requested)
 		bastionConfigsSelected = bastionSelected
 	}
@@ -180,23 +180,22 @@ func parseOnlyFlag(raw string) []toolID {
 }
 
 func promptToolSelection(defaultIncludeGNOC bool) ([]toolID, bool, error) {
-	optionNames := make([]string, 0, len(validToolIDs)+1)
-	for name := range validToolIDs {
-		optionNames = append(optionNames, name)
+	optionalChoices := []string{
+		"bastion setup",
+		"allproxy",
+		"hops-cli",
+		"gnoc-helper",
 	}
-	optionNames = append(optionNames, bastionConfigsOption)
-	sort.Strings(optionNames)
-
-	defaultSelection := toolIDsToNames(allTools())
+	defaultChoices := []string{}
 	if defaultIncludeGNOC {
-		defaultSelection = append(defaultSelection, string(toolGNOCHelper))
+		defaultChoices = append(defaultChoices, "gnoc-helper")
 	}
 
-	selectedNames, err := uiChooseFromList(
-		"CHS Onboard Tool Selection",
-		"Choose which tools to install. If gnoc_helper is selected, stencil/silencer/jit_pass are included automatically.",
-		optionNames,
-		defaultSelection,
+	selectedNames, err := uiChooseOptionalCheckboxes(
+		"CHS Onboard Optional Tools",
+		"Required tools are always installed. Choose optional tools to add:",
+		optionalChoices,
+		defaultChoices,
 	)
 	if err != nil {
 		return nil, false, err
@@ -205,17 +204,21 @@ func promptToolSelection(defaultIncludeGNOC bool) ([]toolID, bool, error) {
 	selected := make([]toolID, 0, len(selectedNames))
 	bastionSelected := false
 	for _, name := range selectedNames {
-		if name == bastionConfigsOption {
+		switch name {
+		case "bastion setup":
 			bastionSelected = true
-			continue
-		}
-		if t, ok := validToolIDs[name]; ok {
-			selected = append(selected, t)
+		case "allproxy":
+			selected = append(selected, toolAllProxy)
+		case "hops-cli":
+			selected = append(selected, toolHopsCLI)
+		case "gnoc-helper":
+			selected = append(selected, toolGNOCHelper)
 		}
 	}
 
 	if hasTool(selected, toolGNOCHelper) {
-		selected = append(selected, toolStencil, toolSilencer, toolJITPass)
+		_ = uiAlert("GNOC Helper Selection", "gnoc-helper selected. Additional GNOC tools will be installed automatically: stencil, silencer, ncpcli, and jit-pass.")
+		selected = append(selected, toolStencil, toolSilencer, toolNCPCLI, toolJITPass)
 	}
 
 	return selected, bastionSelected, nil
@@ -245,7 +248,12 @@ func hasTool(tools []toolID, target toolID) bool {
 
 func printToolList() {
 	fmt.Println("Available tool IDs (--only=id1,id2,...):")
+	names := make([]string, 0, len(validToolIDs))
 	for name := range validToolIDs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		fmt.Println("  " + name)
 	}
 }

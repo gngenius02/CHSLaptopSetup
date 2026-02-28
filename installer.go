@@ -105,6 +105,19 @@ func allTools() []toolID {
 	})
 }
 
+func requiredTools() []toolID {
+	return resolveTools([]toolID{
+		toolITerm2,
+		toolXcode,
+		toolHomebrew,
+		toolPyenv,
+		toolPython313,
+		toolPython396,
+		toolPyenvVenvNCP,
+		toolSpartaPKI,
+	})
+}
+
 func gnocTools() []toolID {
 	return resolveTools([]toolID{
 		toolGNOCHelper, toolStencil, toolSilencer, toolNCPCLI, toolJITPass,
